@@ -1,10 +1,14 @@
 const express = require("express");
 require("dotenv").config();
 const cors = require("cors");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
+const Stripe = require("stripe");
 
 const app = express();
 const PORT = 8000;
+
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 
 // Middleware
 app.use(cors());
@@ -21,6 +25,7 @@ async function run() {
     const db = client.db("book-lover");
     const usersCollection = db.collection("user");
     const booksCollection = db.collection("books");
+    const reviewsCollection = db.collection("reviews");
 
     // Home Route
     app.get("/", (req, res) => {
@@ -37,8 +42,28 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch books." });
       }
     });
-   
 
+    // Get a single book by id
+    app.get("/books/:id", async (req, res) => {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id." });
+      }
+
+      try {
+        const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!book) {
+          return res.status(404).send({ message: "Book not found." });
+        }
+
+        res.send(book);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch book." });
+      }
+    });
+    
     console.log("MongoDB Connected");
   } catch (error) {
     console.error(error);
