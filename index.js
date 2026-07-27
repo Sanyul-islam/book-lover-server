@@ -63,7 +63,26 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch book." });
       }
     });
-    
+    // Get reviews for a book
+    app.get("/books/:id/reviews", async (req, res) => {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id." });
+      }
+
+      try {
+        const reviews = await reviewsCollection
+          .find({ bookId: id })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(reviews);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch reviews." });
+      }
+    });
+
     console.log("MongoDB Connected");
   } catch (error) {
     console.error(error);
