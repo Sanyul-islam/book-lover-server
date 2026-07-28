@@ -63,6 +63,59 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch book." });
       }
     });
+    // Get all books (optionally filtered to a specific librarian's own listings).
+    // Public requests (no librarianId) only see Published books.
+    app.get("/books", async (req, res) => {
+      const { librarianId } = req.query;
+
+      try {
+        const query = librarianId ? { librarianId } : { status: "Published" };
+        const books = await booksCollection.find(query).toArray();
+
+        res.send(books);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch books." });
+      }
+    });
+    // Add a new book (librarian submission — always starts as Pending Approval)
+    app.post("/books", async (req, res) => {
+      const {
+        title,
+        author,
+        description,
+        deliveryFee,
+        category,
+        image,
+        librarianId,
+      } = req.body;
+
+      if (
+        !title ||
+        !author ||
+        !description ||
+        !deliveryFee ||
+        !image ||
+        !librarianId
+      ) {
+        return res.status(400).send({ message: "Missing required fields." });
+      }
+
+      try {
+        const newBook = {
+          ...req.body,
+          status: "Pending Approval",
+          available: false,
+          createdAt: new Date(),
+        };
+
+        const result = await booksCollection.insertOne(newBook);
+        res
+          .status(201)
+          .send({ message: "Book submitted for approval.", result });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to add book." });
+      }
+    });
     //Get User reviews by Id
     app.get("/reviews", async (req, res) => {
       const { userId } = req.query;
