@@ -116,6 +116,29 @@ async function run() {
         res.status(500).send({ message: "Failed to add book." });
       }
     });
+    // Update a book (used for editing, and for unpublish/status changes)
+    app.patch("/books/:id", async (req, res) => {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id." });
+      }
+
+      try {
+        const result = await booksCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: req.body },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Book not found." });
+        }
+
+        res.send({ message: "Book updated.", result });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to update book." });
+      }
+    });
     //Get User reviews by Id
     app.get("/reviews", async (req, res) => {
       const { userId } = req.query;
