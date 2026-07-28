@@ -26,6 +26,7 @@ async function run() {
     const usersCollection = db.collection("user");
     const booksCollection = db.collection("books");
     const reviewsCollection = db.collection("reviews");
+    const deliveriesCollection = db.collection("deliveries");
 
     // Home Route
     app.get("/", (req, res) => {
@@ -96,6 +97,28 @@ async function run() {
         res.send(reviews);
       } catch (error) {
         res.status(500).send({ message: "Failed to fetch reviews." });
+      }
+    });
+    // Get deliveries — filtered by userId (a client's own history) or librarianId (a librarian's incoming requests)
+    app.get("/deliveries", async (req, res) => {
+      const { userId, librarianId } = req.query;
+
+      if (!userId && !librarianId) {
+        return res
+          .status(400)
+          .send({ message: "userId or librarianId is required." });
+      }
+
+      try {
+        const query = userId ? { userId } : { librarianId };
+        const deliveries = await deliveriesCollection
+          .find(query)
+          .sort({ requestDate: -1 })
+          .toArray();
+
+        res.send(deliveries);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch deliveries." });
       }
     });
 
