@@ -309,6 +309,36 @@ async function run() {
       }
     });
 
+    // Get all transactions (admin only) — one row per delivery, enriched with emails
+    app.get("/admin/transactions", async (req, res) => {
+      try {
+        const deliveries = await deliveriesCollection
+          .find()
+          .sort({ requestDate: -1 })
+          .toArray();
+
+        const transactions = await Promise.all(
+          deliveries.map(async (d) => {
+            const clientUser = await findUserById(d.userId);
+            const librarianUser = await findUserById(d.librarianId);
+
+            return {
+              _id: d._id,
+              transactionId: d.stripeSessionId || String(d._id),
+              userEmail: clientUser?.email || "Unknown",
+              librarianEmail: librarianUser?.email || "Unknown",
+              amount: d.deliveryFee,
+              date: d.requestDate,
+            };
+          }),
+        );
+
+        res.send(transactions);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch transactions." });
+      }
+    });
+
     // Create a Stripe Checkout session for the delivery fee
     app.post("/create-checkout-session", async (req, res) => {
       const { bookId, userId, deliveryFee } = req.body;
