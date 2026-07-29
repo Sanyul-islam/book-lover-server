@@ -12,7 +12,13 @@ const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 
 // MongoDB Connection
 const uri = process.env.MONGODB_URI; // Your MongoDB connection string
@@ -220,6 +226,44 @@ async function run() {
       }
     });
 
+    // Update a delivery's status (librarian moves it Pending -> Dispatched -> Delivered)
+    app.patch("/deliveries/:id", async (req, res) => {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid delivery id." });
+      }
+
+      try {
+        const result = await deliveriesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { ...req.body, updatedAt: new Date() } },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Delivery not found." });
+        }
+
+        res.send({ message: "Delivery updated." });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to update delivery." });
+      }
+    });
+
+    // Get all users (admin only) — strips sensitive auth fields before sending
+    app.get("/admin/users", async (req, res) => {
+      try {
+        const users = await usersCollection
+          .find()
+          .project({ password: 0, hashedPassword: 0, sessions: 0, accounts: 0 })
+          .toArray();
+
+        res.send(users);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch users." });
+      }
+    });
+
     // Create a Stripe Checkout session for the delivery fee
     app.post("/create-checkout-session", async (req, res) => {
       const { bookId, userId, deliveryFee } = req.body;
@@ -237,10 +281,13 @@ async function run() {
           return res.status(404).send({ message: "Book not found." });
         }
 
-        if (book.status === "Checked Out") {
-          return res
-            .status(400)
-            .send({ message: "This book is already checked out." });
+        if (
+          book.status === "Checked Out" ||
+          book.status === "Pending Delivery"
+        ) {
+          return res.status(400).send({
+            message: "This book is not currently available for delivery.",
+          });
         }
 
         const session = await stripe.checkout.sessions.create({
@@ -275,6 +322,81 @@ async function run() {
       }
     });
 
+    // Stripe webhook — fires once payment is actually confirmed.
+    // This is the ONLY place that should create a delivery record or
+    // move a book to "Pending Delivery"; never trust the client redirect alone.
+    app.post("/webhook/stripe", async (req, res) => {
+      const sig = req.headers["stripe-signature"];
+      let event;
+
+      try {
+        event = stripe.webhooks.constructEvent(
+          req.rawBody,
+          sig,
+          process.env.STRIPE_WEBHOOK_SECRET,
+        );
+      } catch (error) {
+        console.error("Webhook signature verification failed:", error.message);
+        return res.status(400).send(`Webhook Error: ${error.message}`);
+      }
+
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
+        const { bookId, userId } = session.metadata || {};
+
+        try {
+          if (!bookId || !ObjectId.isValid(bookId)) {
+            console.error("Webhook: missing or invalid bookId in metadata.");
+            return res.status(200).send({ received: true });
+          }
+
+          const book = await booksCollection.findOne({
+            _id: new ObjectId(bookId),
+          });
+
+          if (!book) {
+            console.error("Webhook: book not found for id", bookId);
+            return res.status(200).send({ received: true });
+          }
+
+          let clientName = "Unknown";
+          if (userId) {
+            const user =
+              (await usersCollection.findOne({ _id: userId })) ||
+              (ObjectId.isValid(userId)
+                ? await usersCollection.findOne({ _id: new ObjectId(userId) })
+                : null);
+            if (user?.name) clientName = user.name;
+          }
+
+          await deliveriesCollection.insertOne({
+            bookId,
+            userId,
+            librarianId: book.librarianId,
+            bookTitle: book.title,
+            bookImage: book.image,
+            clientName,
+            deliveryFee: session.amount_total
+              ? session.amount_total / 100
+              : book.deliveryFee,
+            requestDate: new Date(),
+            status: "Pending",
+            stripeSessionId: session.id,
+          });
+
+          await booksCollection.updateOne(
+            { _id: new ObjectId(bookId) },
+            { $set: { status: "Pending Delivery", available: false } },
+          );
+        } catch (error) {
+          console.error("Webhook processing error:", error);
+          // Still acknowledge receipt so Stripe doesn't retry indefinitely
+          // for an error that isn't Stripe's problem to fix.
+        }
+      }
+
+      res.status(200).send({ received: true });
+    });
     console.log("MongoDB Connected");
   } catch (error) {
     console.error(error);
