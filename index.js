@@ -220,6 +220,61 @@ async function run() {
       }
     });
 
+    // Create a Stripe Checkout session for the delivery fee
+    app.post("/create-checkout-session", async (req, res) => {
+      const { bookId, userId, deliveryFee } = req.body;
+
+      if (!bookId || !ObjectId.isValid(bookId)) {
+        return res.status(400).send({ message: "Invalid book id." });
+      }
+
+      try {
+        const book = await booksCollection.findOne({
+          _id: new ObjectId(bookId),
+        });
+
+        if (!book) {
+          return res.status(404).send({ message: "Book not found." });
+        }
+
+        if (book.status === "Checked Out") {
+          return res
+            .status(400)
+            .send({ message: "This book is already checked out." });
+        }
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: `Delivery fee - ${book.title}`,
+                },
+                unit_amount: Math.round(
+                  (deliveryFee || book.deliveryFee) * 100,
+                ),
+              },
+              quantity: 1,
+            },
+          ],
+          metadata: {
+            bookId,
+            userId: userId || "",
+          },
+          success_url: `${CLIENT_URL}/books/${bookId}?success=true`,
+          cancel_url: `${CLIENT_URL}/books/${bookId}?canceled=true`,
+        });
+
+        res.send({ url: session.url });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to create checkout session." });
+      }
+    });
+
     console.log("MongoDB Connected");
   } catch (error) {
     console.error(error);
