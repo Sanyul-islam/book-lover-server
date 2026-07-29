@@ -289,6 +289,25 @@ async function run() {
         res.status(500).send({ message: "Failed to update role." });
       }
     });
+    // Delete a user
+    app.delete("/users/:id", async (req, res) => {
+      const { id } = req.params;
+
+      try {
+        const filter = ObjectId.isValid(id)
+          ? { _id: new ObjectId(id) }
+          : { _id: id };
+        const result = await usersCollection.deleteOne(filter);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "User not found." });
+        }
+
+        res.send({ message: "User deleted." });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to delete user." });
+      }
+    });
 
     // Create a Stripe Checkout session for the delivery fee
     app.post("/create-checkout-session", async (req, res) => {
