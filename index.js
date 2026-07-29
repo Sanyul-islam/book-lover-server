@@ -263,6 +263,32 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch users." });
       }
     });
+    // Change a user's role
+    app.patch("/users/:id", async (req, res) => {
+      const { id } = req.params;
+      const { role } = req.body;
+
+      if (!["user", "librarian", "admin"].includes(role)) {
+        return res.status(400).send({ message: "Invalid role." });
+      }
+
+      try {
+        const filter = ObjectId.isValid(id)
+          ? { _id: new ObjectId(id) }
+          : { _id: id };
+        const result = await usersCollection.updateOne(filter, {
+          $set: { role },
+        });
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "User not found." });
+        }
+
+        res.send({ message: "Role updated." });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to update role." });
+      }
+    });
 
     // Create a Stripe Checkout session for the delivery fee
     app.post("/create-checkout-session", async (req, res) => {
