@@ -338,6 +338,86 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch transactions." });
       }
     });
+    // Check whether the current user has purchased a given book (used by the
+    // frontend to decide whether to show the review form)
+    app.get("/deliveries/check", async (req, res) => {
+      const { userId, bookId } = req.query;
+
+      try {
+        const purchased = await hasPurchased(userId, bookId);
+        res.send({ purchased });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to check purchase status." });
+      }
+    });
+    
+    // Resolves a user document whether _id is stored as a plain string
+    // or a MongoDB ObjectId (varies by auth adapter config).
+    async function findUserById(id) {
+      if (!id) return null;
+      const byString = await usersCollection.findOne({ _id: id });
+      if (byString) return byString;
+      if (ObjectId.isValid(id)) {
+        return usersCollection.findOne({ _id: new ObjectId(id) });
+      }
+      return null;
+    }
+
+    // Creates the delivery record + flips the book to "Pending Delivery",
+    // for a Stripe session that has been confirmed as paid.
+    // Idempotent: safe to call twice for the same session (e.g. once from
+    // the webhook, once from the frontend fallback) — the second call is a no-op.
+    async function fulfillCheckoutSession(session) {
+      const existing = await deliveriesCollection.findOne({
+        stripeSessionId: session.id,
+      });
+      if (existing) return existing;
+
+      const { bookId, userId } = session.metadata || {};
+
+      if (!bookId || !ObjectId.isValid(bookId)) {
+        console.error(
+          "fulfillCheckoutSession: missing or invalid bookId in metadata.",
+        );
+        return null;
+      }
+
+      const book = await booksCollection.findOne({ _id: new ObjectId(bookId) });
+      if (!book) {
+        console.error("fulfillCheckoutSession: book not found for id", bookId);
+        return null;
+      }
+
+      let clientName = "Unknown";
+      if (userId) {
+        const user = await findUserById(userId);
+        if (user?.name) clientName = user.name;
+      }
+
+      const delivery = {
+        bookId,
+        userId,
+        librarianId: book.librarianId,
+        bookTitle: book.title,
+        bookImage: book.image,
+        clientName,
+        deliveryFee: session.amount_total
+          ? session.amount_total / 100
+          : book.deliveryFee,
+        requestDate: new Date(),
+        status: "Pending",
+        stripeSessionId: session.id,
+      };
+
+      await deliveriesCollection.insertOne(delivery);
+
+      await booksCollection.updateOne(
+        { _id: new ObjectId(bookId) },
+        { $set: { status: "Pending Delivery", available: false } },
+      );
+
+      return delivery;
+    }
 
     // Create a Stripe Checkout session for the delivery fee
     app.post("/create-checkout-session", async (req, res) => {
@@ -386,7 +466,7 @@ async function run() {
             bookId,
             userId: userId || "",
           },
-          success_url: `${CLIENT_URL}/books/${bookId}?success=true`,
+          success_url: `${CLIENT_URL}/books/${bookId}?success=true&session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${CLIENT_URL}/books/${bookId}?canceled=true`,
         });
 
@@ -417,52 +497,9 @@ async function run() {
 
       if (event.type === "checkout.session.completed") {
         const session = event.data.object;
-        const { bookId, userId } = session.metadata || {};
 
         try {
-          if (!bookId || !ObjectId.isValid(bookId)) {
-            console.error("Webhook: missing or invalid bookId in metadata.");
-            return res.status(200).send({ received: true });
-          }
-
-          const book = await booksCollection.findOne({
-            _id: new ObjectId(bookId),
-          });
-
-          if (!book) {
-            console.error("Webhook: book not found for id", bookId);
-            return res.status(200).send({ received: true });
-          }
-
-          let clientName = "Unknown";
-          if (userId) {
-            const user =
-              (await usersCollection.findOne({ _id: userId })) ||
-              (ObjectId.isValid(userId)
-                ? await usersCollection.findOne({ _id: new ObjectId(userId) })
-                : null);
-            if (user?.name) clientName = user.name;
-          }
-
-          await deliveriesCollection.insertOne({
-            bookId,
-            userId,
-            librarianId: book.librarianId,
-            bookTitle: book.title,
-            bookImage: book.image,
-            clientName,
-            deliveryFee: session.amount_total
-              ? session.amount_total / 100
-              : book.deliveryFee,
-            requestDate: new Date(),
-            status: "Pending",
-            stripeSessionId: session.id,
-          });
-
-          await booksCollection.updateOne(
-            { _id: new ObjectId(bookId) },
-            { $set: { status: "Pending Delivery", available: false } },
-          );
+          await fulfillCheckoutSession(session);
         } catch (error) {
           console.error("Webhook processing error:", error);
           // Still acknowledge receipt so Stripe doesn't retry indefinitely
@@ -472,6 +509,42 @@ async function run() {
 
       res.status(200).send({ received: true });
     });
+
+    // Fallback for local dev / when the webhook hasn't fired yet: the frontend
+    // calls this right after Stripe redirects back with ?session_id=..., so the
+    // delivery gets created even without `stripe listen` running. Verifies
+    // payment status directly with Stripe before doing anything — never trusts
+    // the redirect alone. Safe to call even if the webhook already ran, since
+    // fulfillCheckoutSession is idempotent.
+    app.post("/verify-checkout-session", async (req, res) => {
+      const { sessionId } = req.body;
+
+      if (!sessionId) {
+        return res.status(400).send({ message: "sessionId is required." });
+      }
+
+      try {
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        if (session.payment_status !== "paid") {
+          return res.status(400).send({ message: "Payment not completed." });
+        }
+
+        const delivery = await fulfillCheckoutSession(session);
+
+        if (!delivery) {
+          return res.status(500).send({
+            message: "Payment confirmed but delivery could not be created.",
+          });
+        }
+
+        res.send({ message: "Delivery confirmed.", delivery });
+      } catch (error) {
+        console.error("verify-checkout-session error:", error);
+        res.status(500).send({ message: "Failed to verify checkout session." });
+      }
+    });
+
     console.log("MongoDB Connected");
   } catch (error) {
     console.error(error);
@@ -479,6 +552,7 @@ async function run() {
 }
 
 run().catch(console.dir);
+// module.exports = app;
 
 // Start Server
 app.listen(PORT, () => {
