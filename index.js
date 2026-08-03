@@ -167,6 +167,7 @@ async function run() {
         res.status(500).send({ message: "Failed to delete book." });
       }
     });
+    //////////////BOOK REVIEWS////////////////////
     //Get User reviews by Id
     app.get("/reviews", async (req, res) => {
       const { userId } = req.query;
@@ -184,6 +185,7 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch reviews." });
       }
     });
+
     // Get reviews for a book
     app.get("/books/:id/reviews", async (req, res) => {
       const { id } = req.params;
@@ -203,6 +205,52 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch reviews." });
       }
     });
+
+    // Create a review for a book
+    app.post("/books/:id/reviews", async (req, res) => {
+      const { id } = req.params;
+      const { userId, userName, userImage, rating, comment } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id." });
+      }
+
+      if (!userId || !rating || !comment) {
+        return res
+          .status(400)
+          .send({ message: "userId, rating, and comment are required." });
+      }
+
+      try {
+        const purchased = await hasPurchased(userId, id);
+        if (!purchased) {
+          return res.status(403).send({
+            message: "You can only review books you've purchased.",
+          });
+        }
+
+        const review = {
+          bookId: id,
+          userId,
+          userName: userName || "Anonymous Reader",
+          userImage: userImage || null,
+          rating: Number(rating),
+          comment,
+          createdAt: new Date(),
+        };
+
+        const result = await reviewsCollection.insertOne(review);
+        res
+          .status(201)
+          .send({
+            message: "Review submitted.",
+            review: { ...review, _id: result.insertedId },
+          });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to submit review." });
+      }
+    });
+    
     // Get deliveries — filtered by userId (a client's own history) or librarianId (a librarian's incoming requests)
     app.get("/deliveries", async (req, res) => {
       const { userId, librarianId } = req.query;
