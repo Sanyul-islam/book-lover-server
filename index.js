@@ -273,6 +273,30 @@ async function run() {
         res.status(500).send({ message: "Failed to update review." });
       }
     });
+
+    // Delete a review
+    app.delete("/reviews/:id", async (req, res) => {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid review id." });
+      }
+
+      try {
+        const result = await reviewsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "Review not found." });
+        }
+
+        res.send({ message: "Review deleted." });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to delete review." });
+      }
+    });
+    
     // Get deliveries — filtered by userId (a client's own history) or librarianId (a librarian's incoming requests)
     app.get("/deliveries", async (req, res) => {
       const { userId, librarianId } = req.query;
