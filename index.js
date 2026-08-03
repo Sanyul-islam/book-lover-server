@@ -240,17 +240,39 @@ async function run() {
         };
 
         const result = await reviewsCollection.insertOne(review);
-        res
-          .status(201)
-          .send({
-            message: "Review submitted.",
-            review: { ...review, _id: result.insertedId },
-          });
+        res.status(201).send({
+          message: "Review submitted.",
+          review: { ...review, _id: result.insertedId },
+        });
       } catch (error) {
         res.status(500).send({ message: "Failed to submit review." });
       }
     });
-    
+
+    // Update a review (edit rating/comment)
+    app.patch("/reviews/:id", async (req, res) => {
+      const { id } = req.params;
+      const { rating, comment } = req.body;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid review id." });
+      }
+
+      try {
+        const result = await reviewsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { rating, comment, updatedAt: new Date() } },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Review not found." });
+        }
+
+        res.send({ message: "Review updated." });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to update review." });
+      }
+    });
     // Get deliveries — filtered by userId (a client's own history) or librarianId (a librarian's incoming requests)
     app.get("/deliveries", async (req, res) => {
       const { userId, librarianId } = req.query;
