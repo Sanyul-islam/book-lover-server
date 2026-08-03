@@ -338,6 +338,16 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch transactions." });
       }
     });
+
+    // A user may only review a book they've actually paid for — any delivery
+    // record for that userId+bookId pair means the Stripe payment succeeded
+    // (delivery records only ever get created in fulfillCheckoutSession,
+    // after Stripe confirms payment — see above).
+    async function hasPurchased(userId, bookId) {
+      if (!userId || !bookId) return false;
+      const delivery = await deliveriesCollection.findOne({ userId, bookId });
+      return !!delivery;
+    }
     // Check whether the current user has purchased a given book (used by the
     // frontend to decide whether to show the review form)
     app.get("/deliveries/check", async (req, res) => {
@@ -350,7 +360,7 @@ async function run() {
         res.status(500).send({ message: "Failed to check purchase status." });
       }
     });
-    
+
     // Resolves a user document whether _id is stored as a plain string
     // or a MongoDB ObjectId (varies by auth adapter config).
     async function findUserById(id) {
