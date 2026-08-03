@@ -71,16 +71,24 @@ async function run() {
     });
     // Get all books (optionally filtered to a specific librarian's own listings).
     // Public requests (no librarianId) only see Published books.
-    app.get("/books", async (req, res) => {
-      const { librarianId } = req.query;
-
+    app.get("/librarian/books", async (req, res) => {
       try {
-        const query = librarianId ? { librarianId } : { status: "Published" };
-        const books = await booksCollection.find(query).toArray();
+        const { librarianId } = req.query;
+
+        if (!librarianId) {
+          return res.status(400).send({
+            message: "librarianId is required",
+          });
+        }
+
+        const books = await booksCollection.find({ librarianId }).toArray();
 
         res.send(books);
       } catch (error) {
-        res.status(500).send({ message: "Failed to fetch books." });
+        console.error(error);
+        res.status(500).send({
+          message: "Failed to fetch books.",
+        });
       }
     });
     // Add a new book (librarian submission — always starts as Pending Approval)
