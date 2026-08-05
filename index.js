@@ -3,6 +3,7 @@ require("dotenv").config();
 const cors = require("cors");
 const { MongoClient, ObjectId } = require("mongodb");
 const Stripe = require("stripe");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 const app = express();
 const PORT = 8000;
@@ -20,6 +21,26 @@ app.use(
   }),
 );
 
+const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const token = authHeader.split(" ")[1];
+  if(!token){
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  try{
+    const { payload } = await jwtVerify(token, JWKS)
+    req.user = payload;
+    
+    next();
+  }
+  catch (err) {
+    return res.status(401).json({ message: "Invalid or expired token." });
+  }  
+}
 // MongoDB Connection
 const uri = process.env.MONGODB_URI; // Your MongoDB connection string
 const client = new MongoClient(uri);
@@ -353,7 +374,7 @@ async function run() {
     });
 
     // Get all users (admin only) — strips sensitive auth fields before sending
-    app.get("/admin/users", async (req, res) => {
+    app.get("/admin/users",verifyToken, async (req, res ) => {
       try {
         const users = await usersCollection
           .find()
