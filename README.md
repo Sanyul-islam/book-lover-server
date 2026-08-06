@@ -10,7 +10,7 @@ Express + MongoDB (native driver) API powering the Book Lover platform: browsing
 - **MongoDB** (native `mongodb` driver, no ODM) — data storage
 - **Stripe** — delivery-fee checkout + webhook-confirmed payments
 - **CORS** — cross-origin requests from the Next.js frontend
-- **jose** — JWT verification via remote JWKS (see [Authentication](#authentication))
+- **jose-cjs** — JWT verification via remote JWKS (see [Authentication](#authentication))
 
 ## Getting Started
 
@@ -90,49 +90,52 @@ All responses are JSON. Errors return `{ "message": "..." }` with an appropriate
 
 ### Books
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/books` | Public: only `Published` books. Add `?librarianId=<id>` for a librarian's own listings (any status). Add `?admin=true` for every book platform-wide (admin only). |
-| `GET` | `/books/:id` | Get a single book by id |
-| `POST` | `/books` | Create a new book listing. Always forced to `status: "Pending Approval"` server-side, regardless of what's sent |
-| `PATCH` | `/books/:id` | Update a book (editing, approval, publish/unpublish toggles) |
-| `DELETE` | `/books/:id` | Delete a book |
+| Method | Route | Protected? | Description |
+|---|---|---|---|
+| `GET` | `/books` | No | Returns **every** book, unfiltered by status. ⚠️ See warning below. |
+| `GET` | `/books/:id` | No | Get a single book by id |
+| `GET` | `/librarian/books?librarianId=<id>` | No | A librarian's own listings (any status). `librarianId` is required. |
+| `POST` | `/books` | **Yes** | Create a new book listing. Always forced to `status: "Pending Approval"` server-side, regardless of what's sent |
+| `PATCH` | `/books/:id` | **Yes** | Update a book (editing, approval, publish/unpublish toggles) |
+| `DELETE` | `/books/:id` | **Yes** | Delete a book |
+
+> ⚠️ **`GET /books` currently returns all books regardless of `status`** — including `Pending Approval` and `Unpublished` listings. This means the public Browse page is currently exposing books that shouldn't be publicly visible yet, which contradicts the intended behavior ("Pending Approval books won't appear on the public Browse page"). This looks like a regression from an earlier version that filtered to `status: "Published"` by default. Worth fixing before this goes anywhere public — either restore that filter, or have the frontend's public Browse page filter client-side as a stopgap (less good, since the unpublished data still ships to every visitor).
 
 ### Reviews
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/books/:id/reviews` | Get all reviews for a book |
-| `POST` | `/books/:id/reviews` | Submit a review. **Requires** the user to have a delivery record for that book (i.e. actually purchased it) — returns `403` otherwise |
-| `GET` | `/reviews?userId=<id>` | Get all reviews left by a specific user |
-| `PATCH` | `/reviews/:id` | Edit a review's `rating`/`comment` |
-| `DELETE` | `/reviews/:id` | Delete a review |
+| Method | Route | Protected? | Description |
+|---|---|---|---|
+| `GET` | `/books/:id/reviews` | No | Get all reviews for a book |
+| `POST` | `/books/:id/reviews` | No* | Submit a review. *Not JWT-protected, but gated by `hasPurchased()` — requires an existing delivery record for that user+book, returns `403` otherwise |
+| `GET` | `/reviews?userId=<id>` | No | Get reviews left by a specific user (omit `userId` to get all reviews) |
+| `PATCH` | `/reviews/:id` | No ⚠️ | Edit a review's `rating`/`comment` — currently no auth at all, anyone can edit any review |
+| `DELETE` | `/reviews/:id` | No ⚠️ | Delete a review — currently no auth at all, anyone can delete any review |
 
 ### Deliveries
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/deliveries?userId=<id>` | A user's own delivery history |
-| `GET` | `/deliveries?librarianId=<id>` | Delivery requests for a librarian's books |
-| `GET` | `/deliveries/check?userId=<id>&bookId=<id>` | Returns `{ purchased: boolean }` — whether this user has a delivery record for this book |
-| `PATCH` | `/deliveries/:id` | Update delivery status (`Pending` → `Dispatched` → `Delivered`) |
+| Method | Route | Protected? | Description |
+|---|---|---|---|
+| `GET` | `/deliveries?userId=<id>` | No | A user's own delivery history |
+| `GET` | `/deliveries?librarianId=<id>` | No | Delivery requests for a librarian's books |
+| `GET` | `/deliveries/check?userId=<id>&bookId=<id>` | No | Returns `{ purchased: boolean }` — whether this user has a delivery record for this book |
+| `PATCH` | `/deliveries/:id` | **Yes** | Update delivery status (`Pending` → `Dispatched` → `Delivered`) |
 
 ### Checkout & Payments
 
-| Method | Route | Description |
-|---|---|---|
-| `POST` | `/create-checkout-session` | Creates a Stripe Checkout Session for a book's delivery fee. Body: `{ bookId, userId, deliveryFee }` |
-| `POST` | `/webhook/stripe` | Stripe webhook — on `checkout.session.completed`, creates the delivery record and sets the book to `Pending Delivery`. **Never call this manually**; Stripe signs and sends it |
-| `POST` | `/verify-checkout-session` | Local-dev fallback that performs the same fulfillment as the webhook, called by the frontend on return from Stripe |
+| Method | Route | Protected? | Description |
+|---|---|---|---|
+| `POST` | `/create-checkout-session` | No | Creates a Stripe Checkout Session for a book's delivery fee. Body: `{ bookId, userId, deliveryFee }` |
+| `POST` | `/webhook/stripe` | No (by design) | Stripe webhook — on `checkout.session.completed`, creates the delivery record and sets the book to `Pending Delivery`. Not JWT-protected since Stripe can't send a Bearer token; verified instead via Stripe's own signature check against `STRIPE_WEBHOOK_SECRET`. **Never call this manually.** |
+| `POST` | `/verify-checkout-session` | No | Local-dev fallback that performs the same fulfillment as the webhook, called by the frontend on return from Stripe |
 
 ### Admin
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/admin/users` | All users, with sensitive auth fields stripped out |
-| `PATCH` | `/users/:id` | Change a user's role (`user` / `librarian` / `admin`) |
-| `DELETE` | `/users/:id` | Delete a user |
-| `GET` | `/admin/transactions` | All delivery records enriched with `userEmail` / `librarianEmail`, for the platform-wide transactions table |
+| Method | Route | Protected? | Description |
+|---|---|---|---|
+| `GET` | `/admin/users` | **Yes** | All users, with sensitive auth fields stripped out |
+| `PATCH` | `/users/:id` | **Yes** | Change a user's role (`user` / `librarian` / `admin`) |
+| `DELETE` | `/users/:id` | **Yes** | Delete a user |
+| `GET` | `/admin/transactions` | **Yes** | All delivery records enriched with `userEmail` / `librarianEmail`, for the platform-wide transactions table |
 
 ## Authentication
 
@@ -167,19 +170,6 @@ const verifyToken = async (req, res, next) => {
 4. On success, the decoded claims are attached to `req.user`, available to any route handler after this middleware.
 5. On failure: `401` with `"Unauthorized"` (missing/malformed header) or `"Invalid or expired token."` (verification failed).
 
-**Protected routes:** _TODO — fill in once confirmed._ `verifyToken` is defined but this README doesn't yet know which routes have it applied. Update this list to match reality:
+**Protected routes:** confirmed against the actual route definitions — see the `Protected?` column in each section of the [API Reference](#api-reference) above for the definitive, per-route answer.
 
-| Method | Route | Protected? |
-|---|---|---|
-| `POST` | `/books` | ⬜ |
-| `PATCH` | `/books/:id` | ⬜ |
-| `DELETE` | `/books/:id` | ⬜ |
-| `PATCH` | `/deliveries/:id` | ⬜ |
-| `GET` | `/admin/users` | ⬜ |
-| `PATCH` | `/users/:id` | ⬜ |
-| `DELETE` | `/users/:id` | ⬜ |
-| `GET` | `/admin/transactions` | ⬜ |
-
-> ⚠️ Note this table currently makes no promises — until it's filled in, assume routes are **unprotected** rather than risk documentation claiming security that isn't actually there.
-
-**Role checks:** `verifyToken` confirms *who* the caller is (a valid, non-expired token), but the code above doesn't check *what role* they have. If `/admin/*` routes rely on `req.user.role`, confirm that check is actually applied per-route (either inside `verifyToken` itself or as a separate middleware) — a valid token alone isn't sufficient to authorize an admin-only action.
+**Role checks — the important caveat:** `verifyToken` confirms *who* the caller is (a valid, non-expired token) but does **not** check *what role* they have. Right now, `/admin/users`, `PATCH /users/:id`, `DELETE /users/:id`, and `/admin/transactions` only require *any* logged-in user's valid token — a `role: "user"` account can currently call `PATCH /users/:id` to promote itself to `admin`, since nothing checks `req.user.role` before running the handler. This needs a second layer (e.g. a `requireRole("admin")` middleware run after `verifyToken`) before these routes are actually admin-only in practice, not just login-only.
