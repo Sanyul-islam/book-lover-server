@@ -387,7 +387,7 @@ async function run() {
       }
     });
     // Change a user's role
-    app.patch("/users/:id", async (req, res) => {
+    app.patch("/users/:id",verifyToken, async (req, res) => {
       const { id } = req.params;
       const { role } = req.body;
 
