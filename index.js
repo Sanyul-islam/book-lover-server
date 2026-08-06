@@ -433,7 +433,7 @@ async function run() {
     });
 
     // Get all transactions (admin only) — one row per delivery, enriched with emails
-    app.get("/admin/transactions", async (req, res) => {
+    app.get("/admin/transactions", verifyToken, async (req, res) => {
       try {
         const deliveries = await deliveriesCollection
           .find()
