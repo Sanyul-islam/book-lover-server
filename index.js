@@ -113,7 +113,7 @@ async function run() {
       }
     });
     // Add a new book (librarian submission — always starts as Pending Approval)
-    app.post("/books", async (req, res) => {
+    app.post("/books",verifyToken, async (req, res) => {
       const {
         title,
         author,
@@ -413,7 +413,7 @@ async function run() {
       }
     });
     // Delete a user
-    app.delete("/users/:id", async (req, res) => {
+    app.delete("/users/:id",verifyToken, async (req, res) => {
       const { id } = req.params;
 
       try {
