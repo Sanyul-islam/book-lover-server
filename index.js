@@ -152,7 +152,7 @@ async function run() {
       }
     });
     // Update a book (used for editing, and for unpublish/status changes)
-    app.patch("/books/:id", async (req, res) => {
+    app.patch("/books/:id",verifyToken, async (req, res) => {
       const { id } = req.params;
 
       if (!ObjectId.isValid(id)) {
