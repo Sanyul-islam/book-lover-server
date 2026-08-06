@@ -350,7 +350,7 @@ async function run() {
     });
 
     // Update a delivery's status (librarian moves it Pending -> Dispatched -> Delivered)
-    app.patch("/deliveries/:id", async (req, res) => {
+    app.patch("/deliveries/:id",verifyToken, async (req, res) => {
       const { id } = req.params;
 
       if (!ObjectId.isValid(id)) {
