@@ -175,7 +175,7 @@ async function run() {
       }
     });
     // Delete a book
-    app.delete("/books/:id", async (req, res) => {
+    app.delete("/books/:id",verifyToken, async (req, res) => {
       const { id } = req.params;
 
       if (!ObjectId.isValid(id)) {
